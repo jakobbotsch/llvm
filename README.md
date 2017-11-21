@@ -18,7 +18,7 @@ Now use cmake to generate build files depending on your build environment:
 ### Windows
 Assuming C:\llvm\install was the folder created above, run:
 ```
-cmake -G "Visual Studio 15 2017 Win64" -Thost=x64 -DCMAKE_INSTALL_PREFIX=C:\llvm\install ../llvm
+cmake -G "Visual Studio 15 2017 Win64" -Thost=x64 -DCMAKE_INSTALL_PREFIX=C:/llvm/install ../llvm
 ```
 
 Now open C:\llvm\build\LLVM.sln in VS 2017 and build the "install" project.
