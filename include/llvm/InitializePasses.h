@@ -382,6 +382,9 @@ void initializeWriteThinLTOBitcodePass(PassRegistry&);
 void initializeXRayInstrumentationPass(PassRegistry&);
 void initializeMIRCanonicalizerPass(PassRegistry &);
 
+void initializeCustom(PassRegistry&);
+void initializeSGXPassPass(PassRegistry&);
+
 } // end namespace llvm
 
 #endif // LLVM_INITIALIZEPASSES_H
