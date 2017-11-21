@@ -19,6 +19,7 @@ set(LLVM_LINK_COMPONENTS
   TransformUtils
   Vectorize
   Passes
+  Custom
 )
 
 add_llvm_fuzzer(llvm-opt-fuzzer llvm-opt-fuzzer.cpp

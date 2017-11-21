@@ -10,6 +10,7 @@ set(LLVM_LINK_COMPONENTS
   Support
   Target
   nativecodegen
+  Custom
   )
 
 set(MCJITTestsSources
