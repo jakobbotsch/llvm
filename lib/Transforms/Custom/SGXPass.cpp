@@ -1,5 +1,7 @@
 #define DEBUG_TYPE "sgxpass"
-#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Pass.h"
 #include "llvm/Transforms/Custom.h"
 #include "llvm/Support/raw_ostream.h"
