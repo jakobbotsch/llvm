@@ -11,6 +11,8 @@ Pass* createSGXStubifyPass();
 
 void addSGXPassesToExtensionPoints(PassManagerBuilder &Builder);
 
+#define SGX_SECURE_ATTR "sgx.secure"
+
 }
 
 #endif
