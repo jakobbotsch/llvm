@@ -53,6 +53,7 @@
 #include "llvm/Support/YAMLTraits.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/Coroutines.h"
+#include "llvm/Transforms/SGX.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -304,6 +305,8 @@ static void AddOptimizationPasses(legacy::PassManagerBase &MPM,
   if (Coroutines)
     addCoroutinePassesToExtensionPoints(Builder);
 
+  addSGXPassesToExtensionPoints(Builder);
+
   Builder.populateFunctionPassManager(FPM);
   Builder.populateModulePassManager(MPM);
 }
@@ -381,6 +384,7 @@ int main(int argc, char **argv) {
   initializeCore(Registry);
   initializeCoroutines(Registry);
   initializeScalarOpts(Registry);
+  initializeSGX(Registry);
   initializeObjCARCOpts(Registry);
   initializeVectorization(Registry);
   initializeIPO(Registry);
@@ -389,7 +393,6 @@ int main(int argc, char **argv) {
   initializeInstCombine(Registry);
   initializeInstrumentation(Registry);
   initializeTarget(Registry);
-  initializeCustom(Registry);
   // For codegen passes, only passes that do IR to IR transformation are
   // supported.
   initializeExpandMemCmpPassPass(Registry);

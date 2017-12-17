@@ -14,12 +14,12 @@ set(LLVM_LINK_COMPONENTS
   MC
   ObjCARCOpts
   ScalarOpts
+  SGX
   Support
   Target
   TransformUtils
   Vectorize
   Passes
-  Custom
 )
 
 add_llvm_fuzzer(llvm-opt-fuzzer llvm-opt-fuzzer.cpp

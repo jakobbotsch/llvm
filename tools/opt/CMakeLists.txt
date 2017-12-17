@@ -12,12 +12,12 @@ set(LLVM_LINK_COMPONENTS
   MC
   ObjCARCOpts
   ScalarOpts
+  SGX
   Support
   Target
   TransformUtils
   Vectorize
   Passes
-  Custom
   )
 
 # Support plugins.

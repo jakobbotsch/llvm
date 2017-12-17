@@ -58,6 +58,9 @@ void initializeGlobalISel(PassRegistry&);
 /// Initialize all passes linked into the CodeGen library.
 void initializeTarget(PassRegistry&);
 
+// Initialize all passes linked into the SGX library.
+void initializeSGX(PassRegistry&);
+
 void initializeAAEvalLegacyPassPass(PassRegistry&);
 void initializeAAResultsWrapperPassPass(PassRegistry&);
 void initializeADCELegacyPassPass(PassRegistry&);
@@ -381,9 +384,6 @@ void initializeWriteBitcodePassPass(PassRegistry&);
 void initializeWriteThinLTOBitcodePass(PassRegistry&);
 void initializeXRayInstrumentationPass(PassRegistry&);
 void initializeMIRCanonicalizerPass(PassRegistry &);
-
-void initializeCustom(PassRegistry&);
-void initializeSGXPassPass(PassRegistry&);
 
 } // end namespace llvm
 

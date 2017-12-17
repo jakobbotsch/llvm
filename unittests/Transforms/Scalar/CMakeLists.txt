@@ -5,7 +5,6 @@ set(LLVM_LINK_COMPONENTS
   Support
   ScalarOpts
   TransformUtils
-  Custom
   )
 
 add_llvm_unittest(ScalarTests

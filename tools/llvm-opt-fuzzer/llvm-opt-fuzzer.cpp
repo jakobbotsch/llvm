@@ -162,6 +162,7 @@ extern "C" LLVM_ATTRIBUTE_USED int LLVMFuzzerInitialize(
   initializeCore(Registry);
   initializeCoroutines(Registry);
   initializeScalarOpts(Registry);
+  initializeSGX(Registry);
   initializeObjCARCOpts(Registry);
   initializeVectorization(Registry);
   initializeIPO(Registry);
