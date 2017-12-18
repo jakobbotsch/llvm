@@ -7,6 +7,7 @@ set(LLVM_LINK_COMPONENTS
   OrcJIT
   RuntimeDyld
   ScalarOpts
+  SGX
   Support
   TransformUtils
   native

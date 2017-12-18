@@ -9,8 +9,6 @@ class PassManagerBuilder;
 /// Duplicate SGX functions creating enter-stubs
 Pass* createSGXStubifyPass();
 
-void addSGXPassesToExtensionPoints(PassManagerBuilder &Builder);
-
 #define SGX_SECURE_ATTR "sgx.secure"
 
 }

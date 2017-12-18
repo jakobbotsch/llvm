@@ -6,6 +6,7 @@ set(LLVM_LINK_COMPONENTS
   Object
   RuntimeDyld
   ScalarOpts
+  SGX
   Support
   TransformUtils
   native

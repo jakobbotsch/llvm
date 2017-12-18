@@ -50,6 +50,7 @@
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/SGX.h"
 #include <memory>
 using namespace llvm;
 
@@ -295,6 +296,7 @@ int main(int argc, char **argv) {
   initializeUnreachableBlockElimLegacyPassPass(*Registry);
   initializeConstantHoistingLegacyPassPass(*Registry);
   initializeScalarOpts(*Registry);
+  initializeSGX(*Registry);
   initializeVectorization(*Registry);
   initializeScalarizeMaskedMemIntrinPass(*Registry);
   initializeExpandReductionsPass(*Registry);

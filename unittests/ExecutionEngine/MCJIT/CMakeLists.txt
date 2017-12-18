@@ -7,6 +7,7 @@ set(LLVM_LINK_COMPONENTS
   MCJIT
   RuntimeDyld
   ScalarOpts
+  SGX
   Support
   Target
   nativecodegen

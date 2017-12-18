@@ -10,6 +10,7 @@ set(LLVM_LINK_COMPONENTS
     IRReader
     MC
     ScalarOpts
+    SGX
     SelectionDAG
     Support
     Target

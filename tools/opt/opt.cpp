@@ -305,8 +305,6 @@ static void AddOptimizationPasses(legacy::PassManagerBase &MPM,
   if (Coroutines)
     addCoroutinePassesToExtensionPoints(Builder);
 
-  addSGXPassesToExtensionPoints(Builder);
-
   Builder.populateFunctionPassManager(FPM);
   Builder.populateModulePassManager(MPM);
 }

@@ -11,6 +11,7 @@ set(LLVM_LINK_COMPONENTS
   Linker
   ObjCARCOpts
   ScalarOpts
+  SGX
   Support
   Target
   TransformUtils

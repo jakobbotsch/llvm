@@ -1,4 +1,4 @@
-;===- ./lib/Transforms/IPO/LLVMBuild.txt -----------------------*- Conf -*--===;
+;===- ./lib/Transforms/SGX/LLVMBuild.txt -----------------------*- Conf -*--===;
 ;
 ;                     The LLVM Compiler Infrastructure
 ;
@@ -17,7 +17,7 @@
 
 [component_0]
 type = Library
-name = IPO
+name = SGX
 parent = Transforms
-library_name = ipo
-required_libraries = Analysis BitReader BitWriter Core InstCombine IRReader Linker Object ProfileData Scalar Support SGX TransformUtils Vectorize Instrumentation
+library_name = SGX
+required_libraries = Analysis Core InstCombine Support TransformUtils
