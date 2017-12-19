@@ -401,8 +401,8 @@ void PassManagerBuilder::populateModulePassManager(
   // Allow forcing function attributes as a debugging and tuning aid.
   MPM.add(createForceFunctionAttrsLegacyPass());
 
-  // SGX pass needs to run early to make sure it can add no-inline
-  // attributes before secure functions are inlined.
+  // SGX pass needs to run early to make sure it can split secure functions
+  // before they inlined.
   MPM.add(createSGXStubifyPass());
 
   // If all optimizations are disabled, just run the always-inline pass and,
