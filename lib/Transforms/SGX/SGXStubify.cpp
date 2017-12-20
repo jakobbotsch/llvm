@@ -44,9 +44,6 @@ bool SGXStubify::runOnModule(Module &M) {
   Constant *EncInit = M.getOrInsertFunction("__llvmsgx_enclave_init",
                                             Type::getVoidTy(*C),
                                             Int8PtrTy);
-  Constant *EncEnter = M.getOrInsertFunction("sgx_enter",
-                                             Type::getVoidTy(*C),
-                                             Int8PtrTy, Int8PtrTy);
   Constant *EncEH = M.getOrInsertGlobal("exception_handler", Type::getInt8Ty(*C));
 
   bool Any = false;
@@ -77,14 +74,29 @@ bool SGXStubify::runOnModule(Module &M) {
     // Add the following code to the old function:
     // if (!__llvmsgx_enclave_tcs)
     //   __llvmsgx_enclave_init(&NF);
-    // sgx_enter(__llvmsgx_enclave_tcs, exception_handler);
+    // EENTER(__llvmsgx_enclave_tcs, exception_handler);
 
     IRBuilder<> IRB(BasicBlock::Create(*C, "", &F));
     Value *TcsIsNull = IRB.CreateICmpEQ(IRB.CreateLoad(EncTcsGlobal),
                                         Constant::getNullValue(Int8PtrTy));
 
+    const char *EnterAsm =
+      "mov rbx, $0\n"
+      "mov rcx, $1\n"
+      "mov eax, 2\n" // EENTER
+      "enclu";
+
+    const char *EnterConstraints = "r,r,~{rbx},~{rcx},~{eax},~{dirflag},~{fpsr},~{flags}";
+
+    FunctionType *VoidFTy = FunctionType::get(Type::getVoidTy(*C), false);
+    InlineAsm *EnterIA = InlineAsm::get(VoidFTy, EnterAsm, EnterConstraints,
+                                        /*hasSideEffect*/true,
+                                        /*isAlignStack*/false,
+                                        InlineAsm::AD_Intel);
+
     LoadInst *TailLoad = IRB.CreateLoad(EncTcsGlobal);
-    IRB.CreateCall(EncEnter, {TailLoad, EncEH});
+    CallInst *EnterCall = IRB.CreateCall(EnterIA, {TailLoad, EncEH});
+    EnterCall->addAttribute(AttributeList::FunctionIndex, Attribute::NoUnwind);
     IRB.CreateRetVoid();
 
     Instruction *Then = SplitBlockAndInsertIfThen(TcsIsNull, TailLoad, false);
@@ -95,21 +107,20 @@ bool SGXStubify::runOnModule(Module &M) {
     // Patch sgx_exit in before returns
     for (auto &BB : NF->getBasicBlockList()) {
       if (ReturnInst *RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
-        FunctionType *VoidFTy = FunctionType::get(Type::getVoidTy(*C), false);
         // EEXIT
-        const char *Asm =
-          "mov eax, 4\n"
-          "mov rbx, 0\n"
+        const char *ExitAsm =
+          "mov rbx, 0\n" // Return to EENTER
+          "mov eax, 4\n" // EEXIT
           "enclu";
 
-        const char *Constraints = "~{ax},~{bx},~{dirflag},~{fpsr},~{flags}";
+        const char *ExitConstraints = "~{ax},~{bx},~{dirflag},~{fpsr},~{flags}";
 
-        InlineAsm *IA = InlineAsm::get(VoidFTy, Asm, Constraints,
-                                       /*hasSideEffect*/true,
-                                       /*isAlignStack*/false,
-                                       InlineAsm::AD_Intel);
-        CallInst *CI = CallInst::Create(IA, "", RI);
-        CI->addAttribute(AttributeList::FunctionIndex, Attribute::NoUnwind);
+        InlineAsm *ExitIA = InlineAsm::get(VoidFTy, ExitAsm, ExitConstraints,
+                                           /*hasSideEffect*/true,
+                                           /*isAlignStack*/false,
+                                           InlineAsm::AD_Intel);
+        CallInst *ExitCall = CallInst::Create(ExitIA, "", RI);
+        ExitCall->addAttribute(AttributeList::FunctionIndex, Attribute::NoUnwind);
       }
     }
   }
