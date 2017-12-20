@@ -93,14 +93,22 @@ bool SGXStubify::runOnModule(Module &M) {
     Value *TcsIsNull = IRB.CreateICmpEQ(IRB.CreateLoad(EncTcsGlobal),
                                         Constant::getNullValue(Int8PtrTy));
 
-    // D = rdi <- first arg
-    // b = rbx <- TCS
-    // c = rcx <- AEP
-    // a = rax <- leaf func (EENTER)
     const char *EnterConstraints =
+      // First get inputs:
+      // D = rdi <- first arg
+      // b = rbx <- TCS
+      // c = rcx <- AEP
+      // a = rax <- leaf func (EENTER)
       "{di},{bx},{cx},{ax},"
-      "~{di},~{bx},~{cx},~{ax},"
-      "~{dirflag},~{fpsr},~{flags},~{memory}";
+      // Now clobbers. Since this is a call we actually clobber
+      // most regs, however here we just take a subset since
+      // there is an internal limit on the number of clobbers.
+      // Clobbered by returning EEXIT
+      "~{bx},"
+      // Scratch registers
+      "~{ax},~{cx},~{dx},~{si},~{di},"
+      "~{r8},~{r9},~{r10},~{r11},"
+      "~{flags},~{memory}";
 
     FunctionType *EnterFTy =
       FunctionType::get(VoidTy, {Int32PtrTy, Int8PtrTy, Int8PtrTy, Int32Ty}, false);
@@ -126,11 +134,10 @@ bool SGXStubify::runOnModule(Module &M) {
     // Patch sgx_exit in before returns
     for (auto &BB : NF->getBasicBlockList()) {
       if (ReturnInst *RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
-        const char *ExitConstraints =
-          "{bx},{ax},~{bx},~{ax},~{dirflag},~{fpsr},~{flags},~{memory}";
-
         FunctionType *ExitFTy = FunctionType::get(VoidTy, {Int64Ty, Int64Ty}, false);
-        InlineAsm *ExitIA = InlineAsm::get(ExitFTy, "enclu", ExitConstraints,
+        InlineAsm *ExitIA = InlineAsm::get(ExitFTy, "enclu",
+                                           // Does not return, so no clobbers necessary
+                                           "{bx},{ax}",
                                            /*hasSideEffect*/true,
                                            /*isAlignStack*/false,
                                            InlineAsm::AD_Intel);
