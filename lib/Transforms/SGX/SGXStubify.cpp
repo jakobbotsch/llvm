@@ -17,6 +17,11 @@ using namespace llvm;
 
 namespace {
 
+enum ENCLU_LEAF {
+  ENCLU_EENTER = 2,
+  ENCLU_EEXIT = 4,
+};
+
 struct SGXStubify : public ModulePass {
   static char ID;
   SGXStubify() : ModulePass(ID) {
@@ -38,13 +43,21 @@ private:
 // runtime to setup the enclave and perform the actual entry.
 bool SGXStubify::runOnModule(Module &M) {
   C = &M.getContext();
+  Type *Int8Ty = Type::getInt8Ty(*C);
+  Type *Int32Ty = Type::getInt32Ty(*C);
+  Type *Int64Ty = Type::getInt64Ty(*C);
+
+  Type *VoidTy = Type::getVoidTy(*C);
+
   Type *Int8PtrTy = Type::getInt8PtrTy(*C);
+  Type *Int32PtrTy = Type::getInt32PtrTy(*C);
+
   Constant *EncTcsGlobal =
     M.getOrInsertGlobal("__llvmsgx_enclave_tcs", Int8PtrTy);
   Constant *EncInit = M.getOrInsertFunction("__llvmsgx_enclave_init",
-                                            Type::getVoidTy(*C),
+                                            VoidTy,
                                             Int8PtrTy);
-  Constant *EncEH = M.getOrInsertGlobal("exception_handler", Type::getInt8Ty(*C));
+  Constant *EncEH = M.getOrInsertGlobal("exception_handler", Int8Ty);
 
   bool Any = false;
   for (Function &F : M.functions()) {
@@ -80,23 +93,29 @@ bool SGXStubify::runOnModule(Module &M) {
     Value *TcsIsNull = IRB.CreateICmpEQ(IRB.CreateLoad(EncTcsGlobal),
                                         Constant::getNullValue(Int8PtrTy));
 
-    const char *EnterAsm =
-      "mov rbx, $0\n"
-      "mov rcx, $1\n"
-      "mov eax, 2\n" // EENTER
-      "enclu";
+    // D = rdi <- first arg
+    // b = rbx <- TCS
+    // c = rcx <- AEP
+    // a = rax <- leaf func (EENTER)
+    const char *EnterConstraints =
+      "{di},{bx},{cx},{ax},"
+      "~{di},~{bx},~{cx},~{ax},"
+      "~{dirflag},~{fpsr},~{flags},~{memory}";
 
-    const char *EnterConstraints = "r,r,~{rbx},~{rcx},~{eax},~{dirflag},~{fpsr},~{flags}";
-
-    FunctionType *VoidFTy = FunctionType::get(Type::getVoidTy(*C), false);
-    InlineAsm *EnterIA = InlineAsm::get(VoidFTy, EnterAsm, EnterConstraints,
+    FunctionType *EnterFTy =
+      FunctionType::get(VoidTy, {Int32PtrTy, Int8PtrTy, Int8PtrTy, Int32Ty}, false);
+    InlineAsm *EnterIA = InlineAsm::get(EnterFTy, "enclu", EnterConstraints,
                                         /*hasSideEffect*/true,
                                         /*isAlignStack*/false,
                                         InlineAsm::AD_Intel);
 
     LoadInst *TailLoad = IRB.CreateLoad(EncTcsGlobal);
-    CallInst *EnterCall = IRB.CreateCall(EnterIA, {TailLoad, EncEH});
+
+    Constant *ConstEEnter = ConstantInt::get(Type::getInt32Ty(*C), ENCLU_EENTER);
+    CallInst *EnterCall =
+      IRB.CreateCall(EnterIA, {&*F.arg_begin(), TailLoad, EncEH, ConstEEnter});
     EnterCall->addAttribute(AttributeList::FunctionIndex, Attribute::NoUnwind);
+
     IRB.CreateRetVoid();
 
     Instruction *Then = SplitBlockAndInsertIfThen(TcsIsNull, TailLoad, false);
@@ -107,22 +126,31 @@ bool SGXStubify::runOnModule(Module &M) {
     // Patch sgx_exit in before returns
     for (auto &BB : NF->getBasicBlockList()) {
       if (ReturnInst *RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
-        // EEXIT
-        const char *ExitAsm =
-          "mov rbx, 0\n" // Return to EENTER
-          "mov eax, 4\n" // EEXIT
-          "enclu";
+        const char *ExitConstraints =
+          "{bx},{ax},~{bx},~{ax},~{dirflag},~{fpsr},~{flags},~{memory}";
 
-        const char *ExitConstraints = "~{ax},~{bx},~{dirflag},~{fpsr},~{flags}";
-
-        InlineAsm *ExitIA = InlineAsm::get(VoidFTy, ExitAsm, ExitConstraints,
+        FunctionType *ExitFTy = FunctionType::get(VoidTy, {Int64Ty, Int64Ty}, false);
+        InlineAsm *ExitIA = InlineAsm::get(ExitFTy, "enclu", ExitConstraints,
                                            /*hasSideEffect*/true,
                                            /*isAlignStack*/false,
                                            InlineAsm::AD_Intel);
-        CallInst *ExitCall = CallInst::Create(ExitIA, "", RI);
+        Constant *Const0 = ConstantInt::get(Int64Ty, 0);
+        Constant *ConstEExit = ConstantInt::get(Int64Ty, ENCLU_EEXIT);
+
+        CallInst *ExitCall = CallInst::Create(ExitIA, {Const0, ConstEExit}, "", RI);
         ExitCall->addAttribute(AttributeList::FunctionIndex, Attribute::NoUnwind);
+        ExitCall->addAttribute(AttributeList::FunctionIndex, Attribute::NoReturn);
       }
     }
+  }
+
+  for (GlobalVariable& GV : M.globals())
+  {
+    if (!GV.hasAttribute(SGX_SECURE_ATTR))
+      continue;
+
+    GV.setSection("sgxtext");
+    Any = true;
   }
 
   return Any;
