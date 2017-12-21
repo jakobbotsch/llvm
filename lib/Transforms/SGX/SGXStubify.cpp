@@ -70,9 +70,10 @@ bool SGXStubify::runOnModule(Module &M) {
     // If a secure function has insecure callers we need to split the function
     // into 3 different functions:
     // 1. The insecure adapter stub, which can be called from insecure functions
-    //    and is in regular '.text'. It uses EENTER to get into the secure adapter.
-    // 2. A secure adapter stub, which is placed in 'sgxtext'. It calls the actual
-    //    implementation and leaves with EEXIT.
+    //    and is in regular '.text'. It packs args/return value and uses EENTER
+    //    to get into the secure adapter.
+    // 2. A secure adapter stub, which is placed in 'sgxtext'. It unpacks args
+    //    and the return value, calls the actual implementation and leaves with EEXIT.
     // 3. The actual function, placed in 'sgxtext'.
     // If there are only secure callers then we can just move it into sgxtext
     // directly.
@@ -103,8 +104,6 @@ bool SGXStubify::runOnModule(Module &M) {
 
     Function *InsecureAdapter = createAdapter(*F);
     for (Instruction *I : InsecureCalls) {
-      CallSite CS(I);
-
       if (CallInst *Call = dyn_cast<CallInst>(I))
         Call->setCalledFunction(InsecureAdapter);
       if (InvokeInst *Invoke = dyn_cast<InvokeInst>(I))
@@ -130,15 +129,27 @@ Function *SGXStubify::createAdapter(Function &F) {
   Type *Int64Ty = Type::getInt64Ty(*C);
   Type *VoidTy = Type::getVoidTy(*C);
   Type *Int8PtrTy = Type::getInt8PtrTy(*C);
-  Type *Int32PtrTy = Type::getInt32PtrTy(*C);
+
+  bool ReturnsVoid = F.getReturnType() == VoidTy;
+  // Create a type containing the return value and all args.
+  // Since secure functions only support 1 argument we will
+  // use this to pass arbitrary arguments.
+  SmallVector<Type *, 8> FrameTypes;
+  if (!ReturnsVoid)
+    FrameTypes.push_back(F.getReturnType());
+  for (const auto &Arg : F.args())
+    FrameTypes.push_back(Arg.getType());
+
+  StructType *FrameTy = StructType::get(*C, FrameTypes);
+  Type *FramePtrTy = PointerType::getUnqual(FrameTy);
 
   // Create insecure adapter:
-  FunctionType *FTy = F.getFunctionType();
   Function *InsecureAdapter =
-    Function::Create(FTy, Function::PrivateLinkage,
+    Function::Create(F.getFunctionType(), Function::PrivateLinkage,
                      Twine("__llvmsgx_insadapt_") + F.getName());
+  FunctionType *SecureAdapterFTy = FunctionType::get(VoidTy, {FramePtrTy}, false);
   Function *SecureAdapter =
-    Function::Create(FTy, Function::PrivateLinkage,
+    Function::Create(SecureAdapterFTy, Function::PrivateLinkage,
                      Twine("__llvmsgx_secadapt_") + F.getName());
 
   F.getParent()->getFunctionList().insert(F.getIterator(), SecureAdapter);
@@ -146,12 +157,28 @@ Function *SGXStubify::createAdapter(Function &F) {
   InsecureAdapter->copyAttributesFrom(&F);
   InsecureAdapter->removeFnAttr(SGX_SECURE_ATTR);
 
-  // Add the following code:
-  // if (!__llvmsgx_enclave_tcs)
-  //   __llvmsgx_enclave_init(&SecureAdapter);
-  // EENTER(__llvmsgx_enclave_tcs, exception_handler);
+  // Add the following code.
+  // secure TRet Func(T1 arg1, T2 arg2, ...) {
+  //   FrameTy f;
+  //   f.arg1 = arg1;
+  //   f.arg2 = arg2;
+  //   ...
+  //   if (!__llvmsgx_enclave_tcs)
+  //     __llvmsgx_enclave_init(&SecureAdapter);
+  //   EENTER(__llvmsgx_enclave_tcs, exception_handler, &f);
+  //   return f.ret;
+  // }
 
   IRBuilder<> IRB(BasicBlock::Create(*C, "", InsecureAdapter));
+  AllocaInst *FrameAlloc = IRB.CreateAlloca(FrameTy);
+  uint32_t InsertIndex = ReturnsVoid ? 0 : 1;
+  for (auto &Arg : InsecureAdapter->args()) {
+    Value *StoredArgAddr =
+      IRB.CreateGEP(FrameAlloc, {IRB.getInt32(0), IRB.getInt32(InsertIndex)});
+    IRB.CreateStore(&Arg, StoredArgAddr);
+    InsertIndex++;
+  }
+
   Value *TcsIsNull = IRB.CreateICmpEQ(IRB.CreateLoad(EncTcsGlobal),
                                       Constant::getNullValue(Int8PtrTy));
 
@@ -173,7 +200,7 @@ Function *SGXStubify::createAdapter(Function &F) {
     "~{flags},~{memory}";
 
   FunctionType *EnterFTy =
-    FunctionType::get(VoidTy, {Int32PtrTy, Int8PtrTy, Int8PtrTy, Int64Ty}, false);
+    FunctionType::get(VoidTy, {FramePtrTy, Int8PtrTy, Int8PtrTy, Int64Ty}, false);
   InlineAsm *EnterIA = InlineAsm::get(EnterFTy, "enclu", EnterConstraints,
                                       /*hasSideEffect*/true,
                                       /*isAlignStack*/false,
@@ -183,21 +210,50 @@ Function *SGXStubify::createAdapter(Function &F) {
 
   Constant *ConstEEnter = IRB.getInt64(ENCLU_EENTER);
   CallInst *EnterCall =
-    IRB.CreateCall(EnterIA, {&*InsecureAdapter->arg_begin(), TailLoad, EncEH, ConstEEnter});
+    IRB.CreateCall(EnterIA, {FrameAlloc, TailLoad, EncEH, ConstEEnter});
   EnterCall->addAttribute(AttributeList::FunctionIndex, Attribute::NoUnwind);
 
-  IRB.CreateRetVoid();
+  if (ReturnsVoid)
+    IRB.CreateRetVoid();
+  else {
+    Value *RetValAddr =
+      IRB.CreateGEP(FrameAlloc, {IRB.getInt32(0), IRB.getInt32(0)});
+
+    Value *RetVal = IRB.CreateLoad(RetValAddr);
+    IRB.CreateRet(RetVal);
+  }
 
   Instruction *Then = SplitBlockAndInsertIfThen(TcsIsNull, TailLoad, false);
 
-  IRBuilder<> IRBThen(Then);
-  IRBThen.CreateCall(EncInit, {IRB.CreateBitCast(SecureAdapter, Int8PtrTy)});
+  IRB.SetInsertPoint(Then);
+  IRB.CreateCall(EncInit, {IRB.CreateBitCast(SecureAdapter, Int8PtrTy)});
 
-  // Create secure adapter. It calls the implementation followed by EEXIT.
+  // Create secure adapter. Add this code:
+  // void SecureAdapter(FrameTy *f) {
+  //   f->ret = SecureFunc(f->arg1, f->arg2, ...);
+  //   EEXIT();
+  // }
   SecureAdapter->setSection(SGX_SECURE_SECTION);
   IRB.SetInsertPoint(BasicBlock::Create(*C, "", SecureAdapter));
 
-  IRB.CreateCall(&F, {&*SecureAdapter->arg_begin()});
+  SmallVector<Value *, 8> SecureToImplArgs;
+  for (unsigned i = 0; i < F.getFunctionType()->getNumParams(); i++) {
+    unsigned LoadIndex = ReturnsVoid ? i : (1 + i);
+    Value *LoadedArgAddr =
+      IRB.CreateGEP(&*SecureAdapter->arg_begin(),
+                    {IRB.getInt32(0), IRB.getInt32(LoadIndex)});
+    Value *LoadedArg = IRB.CreateLoad(LoadedArgAddr);
+    SecureToImplArgs.push_back(LoadedArg);
+  }
+
+  CallInst *ImplCall = IRB.CreateCall(&F, SecureToImplArgs);
+  if (!ReturnsVoid) {
+    Value *RetValAddr =
+      IRB.CreateGEP(&*SecureAdapter->arg_begin(),
+                    {IRB.getInt32(0), IRB.getInt32(0)});
+    IRB.CreateStore(ImplCall, RetValAddr);
+  }
+
   FunctionType *ExitFTy = FunctionType::get(VoidTy, {Int64Ty, Int64Ty}, false);
   InlineAsm *ExitIA = InlineAsm::get(ExitFTy, "enclu",
                                      // Does not return, so no clobbers necessary
