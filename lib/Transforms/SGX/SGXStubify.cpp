@@ -301,14 +301,12 @@ void SGXStubify::fillSecureAdapter(Function *SecureAdapter,
   Value &FrameArg = *ArgIt;
   ArgIt++;
 
-  BasicBlock *SwitchBB = BasicBlock::Create(*C, "secadapt-switch", SecureAdapter);
+  BasicBlock *SwitchBB = BasicBlock::Create(*C, "", SecureAdapter);
   // We always need a default BB. Just mark it unreachable.
   BasicBlock *SwitchDefaultBB = BasicBlock::Create(*C, "", SecureAdapter);
+  BasicBlock *EExitBB = BasicBlock::Create(*C, "", SecureAdapter);
 
-  IRBuilder<> IRB(SwitchDefaultBB);
-  IRB.CreateUnreachable();
-
-  IRB.SetInsertPoint(SwitchBB);
+  IRBuilder<> IRB(SwitchBB);
   SwitchInst *Switch = IRB.CreateSwitch(&FuncIndexArg, SwitchDefaultBB, Adapters.size());
 
   for (const auto& AI : Adapters) {
@@ -337,22 +335,28 @@ void SGXStubify::fillSecureAdapter(Function *SecureAdapter,
       IRB.CreateStore(ImplCall, RetValAddr);
     }
 
-    FunctionType *ExitFTy = FunctionType::get(VoidTy, {Int64Ty, Int64Ty}, false);
-    InlineAsm *ExitIA = InlineAsm::get(ExitFTy, "enclu",
-                                       // Does not return, so no clobbers necessary
-                                       "{bx},{ax}",
-                                       /*hasSideEffect*/true,
-                                       /*isAlignStack*/false,
-                                       InlineAsm::AD_Intel);
-    Constant *Const0 = IRB.getInt64(0);
-    Constant *ConstEExit = IRB.getInt64(ENCLU_EEXIT);
-
-    CallInst *ExitCall = IRB.CreateCall(ExitIA, {Const0, ConstEExit});
-    ExitCall->addAttribute(AttributeList::FunctionIndex, Attribute::NoUnwind);
-    ExitCall->addAttribute(AttributeList::FunctionIndex, Attribute::NoReturn);
-
-    IRB.CreateUnreachable();
+    IRB.CreateBr(EExitBB);
   }
+
+  IRB.SetInsertPoint(SwitchDefaultBB);
+  IRB.CreateUnreachable();
+
+  IRB.SetInsertPoint(EExitBB);
+  FunctionType *ExitFTy = FunctionType::get(VoidTy, {Int64Ty, Int64Ty}, false);
+  InlineAsm *ExitIA = InlineAsm::get(ExitFTy, "enclu",
+                                     // Does not return, so no clobbers necessary
+                                     "{bx},{ax}",
+                                     /*hasSideEffect*/true,
+                                     /*isAlignStack*/false,
+                                     InlineAsm::AD_Intel);
+  Constant *Const0 = IRB.getInt64(0);
+  Constant *ConstEExit = IRB.getInt64(ENCLU_EEXIT);
+
+  CallInst *ExitCall = IRB.CreateCall(ExitIA, {Const0, ConstEExit});
+  ExitCall->addAttribute(AttributeList::FunctionIndex, Attribute::NoUnwind);
+  ExitCall->addAttribute(AttributeList::FunctionIndex, Attribute::NoReturn);
+
+  IRB.CreateUnreachable();
 }
 
 char SGXStubify::ID = 0;
