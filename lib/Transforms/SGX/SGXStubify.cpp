@@ -294,6 +294,7 @@ void SGXStubify::fillSecureAdapter(Function *SecureAdapter,
     return;
 
   SecureAdapter->setSection(SGX_SECURE_SECTION);
+  SecureAdapter->addFnAttr(SGX_SECURE_ATTR);
 
   auto ArgIt = SecureAdapter->arg_begin();
   Value &FuncIndexArg = *ArgIt;

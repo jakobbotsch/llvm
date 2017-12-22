@@ -55,6 +55,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/Transforms/SGX.h"
 #include <cassert>
 #include <string>
 
@@ -460,6 +461,12 @@ MCSection *TargetLoweringObjectFileELF::SelectSectionForGlobal(
 
 MCSection *TargetLoweringObjectFileELF::getSectionForJumpTable(
     const Function &F, const TargetMachine &TM) const {
+  // For secure funcs, emit in same section as parent
+  if (F.hasFnAttribute(SGX_SECURE_ATTR)) {
+    SectionKind FKind = TargetLoweringObjectFile::getKindForGlobal(&F, TM);
+    return getExplicitSectionGlobal(&F, FKind, TM);
+  }
+
   // If the function can be removed, produce a unique section so that
   // the table doesn't prevent the removal.
   const Comdat *C = F.getComdat();
