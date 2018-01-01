@@ -201,7 +201,7 @@ SecureFuncAdapterInfo SGXStubify::createInsecureAdapter(Function &F, uint32_t Fu
   AllocaInst *FrameAlloc = IRB.CreateAlloca(FrameTy);
   uint32_t InsertIndex = ReturnsVoid ? 0 : 1;
   for (auto &Arg : InsecureAdapter->args()) {
-    Value *StoredArgAddr = IRB.CreateStructGEP(nullptr, FrameAlloc, InsertIndex);
+    Value *StoredArgAddr = IRB.CreateStructGEP(FrameTy, FrameAlloc, InsertIndex);
     IRB.CreateStore(&Arg, StoredArgAddr);
     InsertIndex++;
   }
@@ -246,7 +246,7 @@ SecureFuncAdapterInfo SGXStubify::createInsecureAdapter(Function &F, uint32_t Fu
   if (ReturnsVoid)
     IRB.CreateRetVoid();
   else {
-    Value *RetValAddr = IRB.CreateStructGEP(nullptr, FrameAlloc, 0);
+    Value *RetValAddr = IRB.CreateStructGEP(FrameTy, FrameAlloc, 0);
 
     Value *RetVal = IRB.CreateLoad(RetValAddr);
     IRB.CreateRet(RetVal);
@@ -299,7 +299,7 @@ void SGXStubify::fillSecureAdapter(Function *SecureAdapter,
   auto ArgIt = SecureAdapter->arg_begin();
   Value &FuncIndexArg = *ArgIt;
   ArgIt++;
-  Value &FrameArg = *ArgIt;
+  Value &FrameArgI8Ptr = *ArgIt;
   ArgIt++;
 
   BasicBlock *SwitchBB = BasicBlock::Create(*C, "", SecureAdapter);
@@ -320,11 +320,13 @@ void SGXStubify::fillSecureAdapter(Function *SecureAdapter,
     //   EEXIT();
     SmallVector<Value *, 8> SecureToImplArgs;
 
+    Value *FramePtr = IRB.CreateBitCast(&FrameArgI8Ptr, PointerType::getUnqual(AI.FrameTy));
+
     // Dereference all args from frame
     Type *RetTy = AI.OriginalFunction->getReturnType();
     for (unsigned i = 0; i < AI.OriginalFunction->getFunctionType()->getNumParams(); i++) {
       unsigned ArgIndex = RetTy == VoidTy ? i : (1 + i);
-      Value *LoadedArgAddr = IRB.CreateStructGEP(AI.FrameTy, &FrameArg, ArgIndex);
+      Value *LoadedArgAddr = IRB.CreateStructGEP(AI.FrameTy, FramePtr, ArgIndex);
       Value *LoadedArg = IRB.CreateLoad(LoadedArgAddr);
       SecureToImplArgs.push_back(LoadedArg);
     }
@@ -332,7 +334,7 @@ void SGXStubify::fillSecureAdapter(Function *SecureAdapter,
     CallInst *ImplCall = IRB.CreateCall(AI.OriginalFunction, SecureToImplArgs);
     // Store return into frame
     if (RetTy != VoidTy) {
-      Value *RetValAddr = IRB.CreateStructGEP(AI.FrameTy, &FrameArg, 0);
+      Value *RetValAddr = IRB.CreateStructGEP(AI.FrameTy, FramePtr, 0);
       IRB.CreateStore(ImplCall, RetValAddr);
     }
 
