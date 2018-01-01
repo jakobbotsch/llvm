@@ -109,6 +109,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
+#include "llvm/Transforms/SGX.h"
 #include <algorithm>
 #include <cassert>
 #include <cinttypes>
@@ -1485,6 +1486,13 @@ void AsmPrinter::EmitConstantPool() {
 
     MCSection *S = getObjFileLowering().getSectionForConstant(getDataLayout(),
                                                               Kind, C, Align);
+
+    // For secure functions we always put all constants into the same section
+    // as the function.
+    if (MF->getFunction()->hasFnAttribute(SGX_SECURE_ATTR)) {
+      SectionKind FKind = TargetLoweringObjectFile::getKindForGlobal(MF->getFunction(), TM);
+      S = getObjFileLowering().getExplicitSectionGlobal(MF->getFunction(), FKind, TM);
+    }
 
     // The number of sections are small, just do a linear search from the
     // last section to the first.
