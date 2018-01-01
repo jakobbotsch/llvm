@@ -303,12 +303,12 @@ void SGXStubify::fillSecureAdapter(Function *SecureAdapter,
   ArgIt++;
 
   BasicBlock *SwitchBB = BasicBlock::Create(*C, "", SecureAdapter);
-  // We always need a default BB. Just mark it unreachable.
-  BasicBlock *SwitchDefaultBB = BasicBlock::Create(*C, "", SecureAdapter);
+  // EExitBB performs the EEXIT. Every switch case will jump to this at the end,
+  // and we also use it as the default switch case.
   BasicBlock *EExitBB = BasicBlock::Create(*C, "", SecureAdapter);
 
   IRBuilder<> IRB(SwitchBB);
-  SwitchInst *Switch = IRB.CreateSwitch(&FuncIndexArg, SwitchDefaultBB, Adapters.size());
+  SwitchInst *Switch = IRB.CreateSwitch(&FuncIndexArg, EExitBB, Adapters.size());
 
   for (const auto& AI : Adapters) {
     BasicBlock *Case = BasicBlock::Create(*C, "", SecureAdapter);
@@ -340,9 +340,6 @@ void SGXStubify::fillSecureAdapter(Function *SecureAdapter,
 
     IRB.CreateBr(EExitBB);
   }
-
-  IRB.SetInsertPoint(SwitchDefaultBB);
-  IRB.CreateUnreachable();
 
   IRB.SetInsertPoint(EExitBB);
   FunctionType *ExitFTy = FunctionType::get(VoidTy, {Int64Ty, Int64Ty}, false);
