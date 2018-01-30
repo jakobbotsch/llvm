@@ -402,7 +402,8 @@ void PassManagerBuilder::populateModulePassManager(
   MPM.add(createForceFunctionAttrsLegacyPass());
 
   // SGX pass needs to run early to make sure it can split secure functions
-  // before they inlined.
+  // before they are inlined into potentially insecure callers.
+  // Note that this splitting does not block secure<->secure call inlining.
   MPM.add(createSGXStubifyPass());
 
   // If all optimizations are disabled, just run the always-inline pass and,

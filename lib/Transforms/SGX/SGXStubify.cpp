@@ -23,7 +23,6 @@ namespace {
 
 enum ENCLU_LEAF {
   ENCLU_EENTER = 2,
-  ENCLU_EEXIT = 4,
 };
 
 struct SecureFuncAdapterInfo {
@@ -53,10 +52,9 @@ private:
   Type *Int8PtrTy;
   Type *VoidTy;
 
-  SecureFuncAdapterInfo createInsecureAdapter(Function &F, uint32_t FuncIndex,
-                                              Function &SecureAdapter);
-  void fillSecureAdapter(Function *SecureAdapter,
-                         ArrayRef<SecureFuncAdapterInfo> Adapters);
+  SecureFuncAdapterInfo createInsecureAdapter(Function &F, uint32_t FuncIndex);
+  void fillSecureSwitchboard(Function *SecureSwitchboard,
+                             ArrayRef<SecureFuncAdapterInfo> Adapters);
 };
 }
 
@@ -84,7 +82,7 @@ bool SGXStubify::runOnModule(Module &M) {
 
   SmallVector<SecureFuncAdapterInfo, 16> AdapterInfos;
   uint32_t CurrentAdapterIndex = 0;
-  Function *SecureAdapter = nullptr;
+  Function *SecureSwitchboard = nullptr;
   for (Function *F : SecureFuncs) {
     F->setSection(SGX_SECURE_SECTION);
 
@@ -92,9 +90,10 @@ bool SGXStubify::runOnModule(Module &M) {
     // into 3 different functions:
     // 1. The insecure adapter stub, which can be called from insecure functions
     //    and is in regular '.text'. It packs args/return value and uses EENTER
-    //    to get into the secure adapter.
-    // 2. A secure adapter stub, which is placed in 'sgxtext'. It unpacks args
-    //    and the return value, calls the actual implementation and leaves with EEXIT.
+    //    to get into the enclave entry point (in the runtime, see llvm-opensgx.c in OpenSGX).
+    // 2. A secure switchboard stub, which is placed in 'sgxtext'. It unpacks args
+    //    and the return value, calls the actual implementation. The switchboard is
+    //    exported and is used by the enclave entry point.
     // 3. The actual function, placed in 'sgxtext'.
     // If there are only secure callers then we can just move it into sgxtext
     // directly.
@@ -121,21 +120,20 @@ bool SGXStubify::runOnModule(Module &M) {
     }
 
     if (InsecureCalls.empty())
-      continue; // no adapter necessary
+      continue; // no switchboard necessary
 
-    // A secure adapter will be needed, so create it now if necessary.
-    if (SecureAdapter == nullptr) {
-      FunctionType *SecureAdapterFTy =
+    // A secure switchboard will be needed, so create it now if necessary.
+    if (SecureSwitchboard == nullptr) {
+      FunctionType *SecureSwitchboardFTy =
         FunctionType::get(VoidTy, {Int64Ty, Int8PtrTy}, false);
 
-      SecureAdapter = Function::Create(SecureAdapterFTy, Function::PrivateLinkage,
-                                       "__llvmsgx_secadapt");
+      SecureSwitchboard = Function::Create(SecureSwitchboardFTy, Function::ExternalLinkage,
+                                           "__llvmsgx_enclave_switchboard");
 
-      M.getFunctionList().insert(F->getIterator(), SecureAdapter);
+      M.getFunctionList().insert(F->getIterator(), SecureSwitchboard);
     }
 
-    SecureFuncAdapterInfo Adapter =
-      createInsecureAdapter(*F, CurrentAdapterIndex, *SecureAdapter);
+    SecureFuncAdapterInfo Adapter = createInsecureAdapter(*F, CurrentAdapterIndex);
     CurrentAdapterIndex++;
 
     for (Instruction *I : InsecureCalls) {
@@ -148,7 +146,7 @@ bool SGXStubify::runOnModule(Module &M) {
     AdapterInfos.push_back(Adapter);
   }
 
-  fillSecureAdapter(SecureAdapter, AdapterInfos);
+  fillSecureSwitchboard(SecureSwitchboard, AdapterInfos);
 
   bool AnyGV = false;
   for (GlobalVariable& GV : M.globals()) {
@@ -164,8 +162,7 @@ bool SGXStubify::runOnModule(Module &M) {
 
 // Creates an adapter that when used from an insecure function
 // calls the specified secure function.
-SecureFuncAdapterInfo SGXStubify::createInsecureAdapter(Function &F, uint32_t FuncIndex,
-                                                        Function &SecureAdapter) {
+SecureFuncAdapterInfo SGXStubify::createInsecureAdapter(Function &F, uint32_t FuncIndex) {
   bool ReturnsVoid = F.getReturnType() == VoidTy;
   // Create a type containing the return value and all args.
   // Since secure functions only support 1 argument we will
@@ -192,7 +189,7 @@ SecureFuncAdapterInfo SGXStubify::createInsecureAdapter(Function &F, uint32_t Fu
   //   f.arg2 = arg2;
   //   ...
   //   if (!__llvmsgx_enclave_tcs)
-  //     __llvmsgx_enclave_init(&SecureAdapter);
+  //     __llvmsgx_enclave_init();
   //   EENTER(__llvmsgx_enclave_tcs, exception_handler, FuncIndex, &f);
   //   return f.ret;
   // }
@@ -256,7 +253,7 @@ SecureFuncAdapterInfo SGXStubify::createInsecureAdapter(Function &F, uint32_t Fu
 
   IRB.SetInsertPoint(Then);
 
-  IRB.CreateCall(EncInit, {IRB.CreateBitCast(&SecureAdapter, Int8PtrTy)});
+  IRB.CreateCall(EncInit);
 
   return SecureFuncAdapterInfo
   {
@@ -267,12 +264,12 @@ SecureFuncAdapterInfo SGXStubify::createInsecureAdapter(Function &F, uint32_t Fu
   };
 }
 
-// The secure adapter is responsible for unpacking arguments, jumping to the correct
+// The secure switchboard is responsible for unpacking arguments, jumping to the correct
 // secure function, and packing the returned value. It allows us to support arbitrary
 // args and return values (secure functions can only support up to 2 args and no returns),
 // and also allows us multiple entry points (OpenSGX only supports a single TCS).
-// The secure adapter has code looking like the following:
-// void SecureAdapter(int FuncIndex, char *Frame) {
+// The secure switchboard has code looking like the following:
+// void SecureSwitchboard(int FuncIndex, char *Frame) {
 //   switch (FuncIndex) {
 //   case 0:
 //     Func0FrameTy *Func0Frame = (Func0FrameTy *)Frame;
@@ -288,30 +285,31 @@ SecureFuncAdapterInfo SGXStubify::createInsecureAdapter(Function &F, uint32_t Fu
 // When an insecure adapter needs to enter its function, it uses EENTER with the
 // proper index and a pointer to a (stack allocated) frame structure containing
 // args and space for the return value.
-void SGXStubify::fillSecureAdapter(Function *SecureAdapter,
-                                   ArrayRef<SecureFuncAdapterInfo> Adapters) {
+void SGXStubify::fillSecureSwitchboard(Function *SecureSwitchboard,
+                                       ArrayRef<SecureFuncAdapterInfo> Adapters) {
   if (Adapters.empty())
     return;
 
-  SecureAdapter->setSection(SGX_SECURE_SECTION);
-  SecureAdapter->addFnAttr(SGX_SECURE_ATTR);
+  SecureSwitchboard->setSection(SGX_SECURE_SECTION);
+  SecureSwitchboard->addFnAttr(SGX_SECURE_ATTR);
 
-  auto ArgIt = SecureAdapter->arg_begin();
+  auto ArgIt = SecureSwitchboard->arg_begin();
   Value &FuncIndexArg = *ArgIt;
   ArgIt++;
   Value &FrameArgI8Ptr = *ArgIt;
   ArgIt++;
 
-  BasicBlock *SwitchBB = BasicBlock::Create(*C, "", SecureAdapter);
-  // EExitBB performs the EEXIT. Every switch case will jump to this at the end,
-  // and we also use it as the default switch case.
-  BasicBlock *EExitBB = BasicBlock::Create(*C, "", SecureAdapter);
+  BasicBlock *SwitchBB = BasicBlock::Create(*C, "", SecureSwitchboard);
+  BasicBlock *DefaultBB = BasicBlock::Create(*C, "", SecureSwitchboard);
 
   IRBuilder<> IRB(SwitchBB);
-  SwitchInst *Switch = IRB.CreateSwitch(&FuncIndexArg, EExitBB, Adapters.size());
+  SwitchInst *Switch = IRB.CreateSwitch(&FuncIndexArg, DefaultBB, Adapters.size());
+
+  IRB.SetInsertPoint(DefaultBB);
+  IRB.CreateRetVoid();
 
   for (const auto& AI : Adapters) {
-    BasicBlock *Case = BasicBlock::Create(*C, "", SecureAdapter);
+    BasicBlock *Case = BasicBlock::Create(*C, "", SecureSwitchboard);
     Switch->addCase(IRB.getInt64(AI.FuncIndex), Case);
 
     IRB.SetInsertPoint(Case);
@@ -338,25 +336,8 @@ void SGXStubify::fillSecureAdapter(Function *SecureAdapter,
       IRB.CreateStore(ImplCall, RetValAddr);
     }
 
-    IRB.CreateBr(EExitBB);
+    IRB.CreateRetVoid();
   }
-
-  IRB.SetInsertPoint(EExitBB);
-  FunctionType *ExitFTy = FunctionType::get(VoidTy, {Int64Ty, Int64Ty}, false);
-  InlineAsm *ExitIA = InlineAsm::get(ExitFTy, "enclu",
-                                     // Does not return, so no clobbers necessary
-                                     "{bx},{ax}",
-                                     /*hasSideEffect*/true,
-                                     /*isAlignStack*/false,
-                                     InlineAsm::AD_Intel);
-  Constant *Const0 = IRB.getInt64(0);
-  Constant *ConstEExit = IRB.getInt64(ENCLU_EEXIT);
-
-  CallInst *ExitCall = IRB.CreateCall(ExitIA, {Const0, ConstEExit});
-  ExitCall->addAttribute(AttributeList::FunctionIndex, Attribute::NoUnwind);
-  ExitCall->addAttribute(AttributeList::FunctionIndex, Attribute::NoReturn);
-
-  IRB.CreateUnreachable();
 }
 
 char SGXStubify::ID = 0;

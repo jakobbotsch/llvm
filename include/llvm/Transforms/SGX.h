@@ -6,7 +6,6 @@ namespace llvm {
 class Pass;
 class PassManagerBuilder;
 
-/// Duplicate SGX functions creating enter-stubs
 Pass* createSGXStubifyPass();
 
 #define SGX_SECURE_ATTR "sgx.secure"
