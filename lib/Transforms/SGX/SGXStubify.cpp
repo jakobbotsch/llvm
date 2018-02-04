@@ -53,8 +53,7 @@ private:
   Type *VoidTy;
 
   SecureFuncAdapterInfo createInsecureAdapter(Function &F, uint32_t FuncIndex);
-  void fillSecureSwitchboard(Function *SecureSwitchboard,
-                             ArrayRef<SecureFuncAdapterInfo> Adapters);
+  void createSecureSwitchboard(ArrayRef<SecureFuncAdapterInfo> Adapters);
 };
 }
 
@@ -82,7 +81,6 @@ bool SGXStubify::runOnModule(Module &M) {
 
   SmallVector<SecureFuncAdapterInfo, 16> AdapterInfos;
   uint32_t CurrentAdapterIndex = 0;
-  Function *SecureSwitchboard = nullptr;
   for (Function *F : SecureFuncs) {
     F->setSection(SGX_SECURE_SECTION);
 
@@ -120,18 +118,7 @@ bool SGXStubify::runOnModule(Module &M) {
     }
 
     if (InsecureCalls.empty())
-      continue; // no switchboard necessary
-
-    // A secure switchboard will be needed, so create it now if necessary.
-    if (SecureSwitchboard == nullptr) {
-      FunctionType *SecureSwitchboardFTy =
-        FunctionType::get(VoidTy, {Int64Ty, Int8PtrTy}, false);
-
-      SecureSwitchboard = Function::Create(SecureSwitchboardFTy, Function::ExternalLinkage,
-                                           "__llvmsgx_enclave_switchboard");
-
-      M.getFunctionList().insert(F->getIterator(), SecureSwitchboard);
-    }
+      continue; // no adapter necessary
 
     SecureFuncAdapterInfo Adapter = createInsecureAdapter(*F, CurrentAdapterIndex);
     CurrentAdapterIndex++;
@@ -146,7 +133,8 @@ bool SGXStubify::runOnModule(Module &M) {
     AdapterInfos.push_back(Adapter);
   }
 
-  fillSecureSwitchboard(SecureSwitchboard, AdapterInfos);
+  if (!AdapterInfos.empty())
+    createSecureSwitchboard(AdapterInfos);
 
   bool AnyGV = false;
   for (GlobalVariable& GV : M.globals()) {
@@ -285,10 +273,15 @@ SecureFuncAdapterInfo SGXStubify::createInsecureAdapter(Function &F, uint32_t Fu
 // When an insecure adapter needs to enter its function, it uses EENTER with the
 // proper index and a pointer to a (stack allocated) frame structure containing
 // args and space for the return value.
-void SGXStubify::fillSecureSwitchboard(Function *SecureSwitchboard,
-                                       ArrayRef<SecureFuncAdapterInfo> Adapters) {
-  if (Adapters.empty())
-    return;
+void SGXStubify::createSecureSwitchboard(ArrayRef<SecureFuncAdapterInfo> Adapters) {
+  FunctionType *SecureSwitchboardFTy =
+    FunctionType::get(VoidTy, {Int64Ty, Int8PtrTy}, false);
+
+  Function *SecureSwitchboard =
+    Function::Create(SecureSwitchboardFTy, Function::ExternalLinkage,
+                     "__llvmsgx_enclave_switchboard");
+
+  M->getFunctionList().insert(M->getFunctionList().begin(), SecureSwitchboard);
 
   SecureSwitchboard->setSection(SGX_SECURE_SECTION);
   SecureSwitchboard->addFnAttr(SGX_SECURE_ATTR);
