@@ -11,11 +11,11 @@ git clone https://github.com/jakobbotsch/clang-sgx.git llvm/tools/clang
 ```
 
 Next, build it. LLVM/Clang builds the easiest and fastest with cmake using the `ninja` build system, so install those:
-```
+```bash
 sudo apt-get install cmake ninja-build
 ```
 And build + install (this will take a while):
-```
+```bash
 mkdir install
 mkdir build && cd build
 cmake -G Ninja -DCMAKE_INSTALL_PREFIX=$(realpath ../install) -DCMAKE_BUILD_TYPE=Release ../llvm
@@ -23,14 +23,13 @@ ninja
 ninja install
 ```
 
-Now you have the LLVM-SGX binaries in the ../install directory. Checkout and build OpenSGX (instructions adapted from OpenSGX project):
+Now you have the LLVM/Clang binaries in the ../install directory. Checkout and build OpenSGX (instructions adapted from OpenSGX project):
 
 ```bash
-cd ../..
+cd ../../
 git clone https://github.com/jakobbotsch/opensgx.git
 cd opensgx
-sudo apt-get install git libglib2.0-dev libfdt-dev libpixman-1-dev zlib1g-dev libaio-dev libssl-dev
-sudo apt-get install libelf-dev
+sudo apt-get install git libglib2.0-dev libfdt-dev libpixman-1-dev zlib1g-dev libaio-dev libssl-dev libelf-dev
 cd qemu
 ./configure-arch
 make -j $(nproc)
@@ -52,7 +51,7 @@ g++ -std=c++17 -O3 main.cpp -lelf -o llvm-sgx-post
 
 Now we're ready to compile and run LLVM-SGX programs.
 
-```
+```bash
 cd ..
 mkdir test && cd test
 cp ../opensgx/user/libllvm-opensgx.a .
@@ -69,7 +68,7 @@ int main()
     printf("The answer to life, the universe and everything is: %d\n", AnswerToLife());
 }' >> test.c
 
-../llvm/install/bin/clang -fPIC -o test test.c libllvm-opensgx.a
+../llvm/install/bin/clang -fPIC test.c libllvm-opensgx.a -o test
 ../llvm-sgx-post/llvm-sgx-post test
 ../opensgx/qemu/x86_64-linux-user/qemu-x86_64 test
 ```
@@ -79,5 +78,5 @@ The example should run successfully.
 ## Code/differences
 LLVM-SGX: [See here](https://github.com/llvm-mirror/llvm/compare/master...jakobbotsch:master)  
 Clang-SGX: [See here](https://github.com/llvm-mirror/clang/compare/master...jakobbotsch:master)  
-OpenSGX (including libllvm-opensgx): [See here](https://github.com/sslab-gatech/opensgx/compare/master...jakobbotsch:master)
+OpenSGX (including libllvm-opensgx): [See here](https://github.com/sslab-gatech/opensgx/compare/master...jakobbotsch:master)  
 LLVM-SGX-post: [See here](https://github.com/jakobbotsch/llvm-sgx-post/blob/master/main.cpp)

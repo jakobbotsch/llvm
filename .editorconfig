@@ -1,15 +1,7 @@
 # editorconfig.org
 
-# top-most EditorConfig file
 root = true
-
-# Default settings:
-# Use 2 spaces as indentation
-# Trim trailing whitespace
 [*]
 insert_final_newline = false
 indent_size = 2
 indent_style = space
-# Commented until R# fixes an IntelliSense issue that replaces
-# everything by _
-#trim_trailing_whitespace = true
